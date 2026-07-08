@@ -40,11 +40,6 @@ def _stroke(style):
     return m.group(1).lower() if m else None
 
 
-def _stroke_width(style):
-    m = re.search(r"stroke-width:\s*([0-9.]+)", style or "")
-    return float(m.group(1)) if m else None
-
-
 def _find_id(root, target):
     for e in root.iter():
         if e.get("id") == target:
@@ -177,23 +172,45 @@ class Chart:
             gid = ch.get("id") or ""
             if _tag(ch) != "g" or not gid.startswith("line2d"):
                 continue
-            # Identify the line path: colored, plot-weight (>1.0), color in legend.
+            # The direct line2d children of axes_1 are exactly the plotted data
+            # series (grid lines / tick marks live under axis_1 / axis_2, not
+            # here). Identify the connecting line as the group's colored path
+            # that is NOT a marker glyph -- marker shapes are emitted under
+            # <defs>. Do NOT gate on stroke-width: matplotlib omits stroke-width
+            # from the SVG when linewidth <= 1.0, and the instruction pins no
+            # minimum linewidth, so a width threshold would reject valid charts.
+            defs_paths = {id(p) for p in ch.findall(".//s:defs//s:path", NS)}
             color = None
             line_pts = []
             for p in ch.findall(".//s:path", NS):
-                st = p.get("style") or ""
-                c = _stroke(st)
-                w = _stroke_width(st) or 0.0
-                if c and c in self.legend_colors and w >= 1.2:
+                if id(p) in defs_paths:
+                    continue
+                c = _stroke(p.get("style"))
+                if c and c in self.legend_colors:
                     color = c
                     line_pts = _parse_path_points(p.get("d"))
                     break
-            if color is None:
-                continue
             markers = []
             for u in ch.findall(".//s:use", NS):
                 if u.get("x") is not None and u.get("y") is not None:
                     markers.append((float(u.get("x")), float(u.get("y"))))
+            # Fallback for a markers-only series (no connecting line, e.g. a
+            # scatter-drawn lone censored point): recover the color from the
+            # marker's own stroke or its glyph definition.
+            if color is None and markers:
+                for u in ch.findall(".//s:use", NS):
+                    c = _stroke(u.get("style"))
+                    if c and c in self.legend_colors:
+                        color = c
+                        break
+                if color is None:
+                    for p in ch.findall(".//s:defs//s:path", NS):
+                        c = _stroke(p.get("style"))
+                        if c and c in self.legend_colors:
+                            color = c
+                            break
+            if color is None:
+                continue
             series[color] = {
                 "markers": [self.to_data(x, y) for x, y in markers],
                 "line": [self.to_data(x, y) for x, y in line_pts],
