@@ -1,0 +1,46 @@
+name: Validate task
+
+# Builds the task's environment image, runs the reference solution as the
+# "oracle", then runs the verifier -- exactly as Harbor would -- and asserts the
+# reference earns reward 1 while an empty attempt earns reward 0.
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build environment image
+        run: docker build -t dynamo-task -f environment/Dockerfile environment/
+
+      - name: Oracle solve + verify (expect reward 1)
+        run: |
+          set -e
+          docker run --rm \
+            -v "$PWD/solution:/solution:ro" \
+            -v "$PWD/tests:/tests:ro" \
+            dynamo-task bash -c '
+              set -e
+              bash /solution/solve.sh
+              bash /tests/test.sh || true
+              reward=$(cat /logs/verifier/reward.txt)
+              echo "PASS@1 reward = $reward"
+              test "$reward" = "1"
+            '
+
+      - name: Negative check (no chart -> reward 0)
+        run: |
+          set -e
+          docker run --rm \
+            -v "$PWD/tests:/tests:ro" \
+            dynamo-task bash -c '
+              bash /tests/test.sh >/dev/null 2>&1 || true
+              reward=$(cat /logs/verifier/reward.txt)
+              echo "empty-attempt reward = $reward"
+              test "$reward" = "0"
+            '
