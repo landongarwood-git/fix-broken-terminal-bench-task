@@ -1,26 +1,26 @@
-artifacts = ["/app/report.json"]
+artifacts = ["/app/retention.svg"]
 
 [task]
-name = "dynamo/log-report"
-description = "Parse an Apache-style access log into a small JSON summary report."
+name = "dynamo/cohort-retention-chart"
+description = "Build an honest weekly-cohort retention chart (with right-censoring, timezone-correct weekly bucketing, and a size-weighted blended curve) from a raw event log and render it to SVG."
 
 [metadata]
-category = "data_processing_and_etl"
-subcategory = "text_processing"
-task_objective = ["transform", "generate"]
-artifact_type = ["text_or_log_file", "generated_output_artifact"]
-expert_time_estimate_hours = 0.3
+category = "data_science_and_reporting"
+subcategory = "data_visualization"
+task_objective = ["analyze", "transform", "generate"]
+artifact_type = ["dataset_or_tabular_file", "document_or_report", "generated_output_artifact"]
+expert_time_estimate_hours = 4.0
 model_tested = "GPT-5.4"
 agent_tested = "Terminus-2"
-difficulty_explanation = "A small, single-file access log must be parsed and reduced to three summary values (total requests, unique client IPs, and the most-requested path). No tricky edge cases or external dependencies."
-solution_explanation = "Read /app/access.log line by line, count total non-empty lines, collect the first whitespace-delimited field (client IP) into a set, extract the request path from the quoted request line, and write total_requests, unique_ips, and top_path to /app/report.json."
-verification_explanation = "The verifier loads /app/report.json and asserts the exact expected values for the sample log: total_requests == 6, unique_ips == 3, and top_path == \"/index.html\"."
+difficulty_explanation = "A raw event log must be turned into weekly cohort-retention curves whose plotted values are checked to +/-1 percentage point. The hard part is not plotting but getting the encoded quantities right: cohorts by earliest signup week in America/New_York with DST-aware, Monday-start ISO weeks; excluding activity-without-signup users; deduping to distinct weekly-active users; right-censoring each cohort at the last complete week (no zero-fill / no interpolation) including one entirely-censored cohort that is a lone point; capping k at 12; and a blended curve that is the size-weighted mean over only the cohorts still observed at each week. The data embeds boundary/DST-sensitive timestamps that a naive UTC or fixed-offset bucketing mis-assigns, duplicate activity and duplicate signup rows, decoy event types, and signup-less users, so several plausible pipelines produce a professional-looking but wrong chart (most visibly, a fabricated churn cliff for censored cohorts)."
+solution_explanation = "Parse the CSV; convert each event_ts to America/New_York (DST-aware) and floor to its Monday-start week; assign each user's cohort from their earliest signup week and drop users with no signup; build a deduped (user, week) activity set; compute Retention[cohort,k] = distinct active users / cohort size with k=0 pinned to 100%; derive the observed span over all rows and the last complete week (Mon 00:00 .. Sun 23:59:59 NY both inside the span), mask any (cohort,k) beyond it, and drop k>12; compute the observed-only size-weighted blended curve; render with matplotlib (tab10 colours, one distinct marker per cohort at every integer week, dashed-black no-marker 'Blended' line last in a chronological legend, svg.fonttype='none') and save to /app/retention.svg."
+verification_explanation = "The verifier parses /app/retention.svg (no sidecar): it calibrates pixel->data coordinates from the numeric axis tick labels, reads the legend to map colour->cohort label and recover series order, and reconstructs each series' vertices from its markers (cohorts) or line path (blended). It then checks: (a) the legend labels are the expected cohorts in chronological order with 'Blended' last and all colours distinct; (b) every cohort vertex is within +/-1 percentage point of ground truth and the set of plotted weeks matches exactly (so each line terminates at its last observed week -- zero-filled or interpolated curves fail); (c) the entirely-censored cohort is a single marker at (0, 100%) with no line drawn; and (d) the blended curve matches the observed-only size-weighted mean within +/-1 percentage point. Ground truth is generated at authoring time from an explicit design, and the design asserts a >=3pp separation between the correct values and three canonical wrong methods (unweighted blend, no-censoring blend, event-count normalization), so the +/-1pp band discriminates method rather than arithmetic."
 
 [verifier]
 timeout_sec = 120.0
 
 [agent]
-timeout_sec = 120.0
+timeout_sec = 1800.0
 
 [environment]
 build_timeout_sec = 600.0
